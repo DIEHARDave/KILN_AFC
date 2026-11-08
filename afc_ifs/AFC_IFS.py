@@ -279,6 +279,11 @@ class afcIFS(afcUnit):
         temp = slot.get('temp')
         if temp:
             lane.extruder_temp = temp
+        if lane.spool_id is None and not lane.weight:
+            # AFC's own default for a spool loaded without Spoolman
+            # (AFC_spool._set_values, skipped once a color is set). The
+            # panels draw a 0 g spool empty, without its color.
+            lane.weight = 1000
         self._send_lane_data(lane)
 
     def _push_kiln(self, lane, mtype, color):

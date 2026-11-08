@@ -65,6 +65,10 @@ class afcIFS(afcUnit):
         self.unload_cmd = config.get('unload_cmd', 'IFS_UNLOAD SLOT={slot}')
         self.swap_cmd = config.get('swap_cmd', 'IFS_SWAP CHANNEL={slot}')
         self.eject_cmd = config.get('eject_cmd', 'IFS_EJECT SLOT={slot}')
+        # Route T<n> to the lane of the slot Kiln maps tool n to (ifs.tool_map:
+        # IFS_MAP_MODE, the screen, IFS_MAP_TOOL, a print's color matching)
+        self.follow_tool_map = config.getboolean('follow_tool_map', True)
+        self._tool_map = None     # Kiln's tool_map we last applied
 
         self.ifs = None
         self.head_sensor = None
@@ -168,11 +172,13 @@ class afcIFS(afcUnit):
         if self._busy or self.ifs is None:
             return eventtime + self.poll_interval
         st = self._ifs_status(eventtime)
-        if not st or st.get('busy'):
-            return eventtime + self.poll_interval
-        if not self._prepped():
+        if not st or not self._prepped():
             # AFC connects to Moonraker and reads the lanes at PREP;
             # system_Test does the first presence, tool and material pass
+            return eventtime + self.poll_interval
+        if self.follow_tool_map:
+            self._sync_tool_map(st.get('tool_map'))
+        if st.get('busy'):
             return eventtime + self.poll_interval
 
         head =self._head_detected(eventtime)
@@ -221,6 +227,29 @@ class afcIFS(afcUnit):
         # AFC's Moonraker client exists only once PREP has started
         if getattr(self.afc, 'moonraker', None) is not None:
             lane.send_lane_data()
+
+    # -- tool map: Kiln's ifs.tool_map -> AFC's tool_cmds -----------------------
+
+    def _sync_tool_map(self, tool_map):
+        """AFC resolves T<n> through afc.tool_cmds ('T1' -> 'lane2') on each
+        call. Kiln maps tools to slots itself and may give two tools one
+        slot, which AFC's SET_MAP (one tool per lane) can't express, so
+        tool_cmds is written directly. Applied when Kiln's map changes; a
+        SET_MAP in between holds until then."""
+        if not isinstance(tool_map, dict) or tool_map == self._tool_map:
+            return
+        self._tool_map = dict(tool_map)
+        moved = []
+        for tool, slot in sorted(tool_map.items()):
+            tcmd = "T%s" % (tool,)
+            lane = self._lane_for_slot(slot)
+            if lane is None or tcmd not in self.afc.tool_cmds:
+                continue
+            if self.afc.tool_cmds[tcmd] != lane.name:
+                self.afc.tool_cmds[tcmd] = lane.name
+                moved.append("%s->%s" % (tcmd, lane.name))
+        if moved:
+            self.logger.info("AFC_IFS: following Kiln's tool map: %s" % ", ".join(moved))
 
     # -- material and color: AFC lanes <-> Kiln's ifs_materials ---------------
 

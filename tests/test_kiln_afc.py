@@ -269,6 +269,21 @@ def run(args):
         check("AFC: nothing current", afc(api).get('current_load') is None,
               afc(api).get('current_load'))
 
+        # Kiln's tool map (IFS_MAP_TOOL, a print's color matching) routes T<n>
+        ok, err, out = api.gcode("IFS_MAP_TOOL TOOL=1 SLOT=4")
+        time.sleep(3)
+        ok2, err2, out = api.gcode("T1")
+        check("T1 follows Kiln's tool map (tool 1 -> slot 4)",
+              ok and ok2 and ifs(api).get('channel') == 4
+              and afc(api).get('current_load') == 'lane4',
+              err or err2 or (ifs(api).get('channel'), afc(api).get('current_load')))
+        api.gcode("IFS_MAP_TOOL RESET=1")
+        time.sleep(3)
+        ok, err, out = api.gcode("T1")
+        check("T1 back on lane2 after IFS_MAP_TOOL RESET",
+              ok and ifs(api).get('channel') == 2, err or ifs(api).get('channel'))
+        api.gcode("TOOL_UNLOAD")
+
         ok, err, out = api.gcode("IFS_LOAD SLOT=4")
         mirrored = wait_for(lambda: afc(api).get('current_load') == 'lane4', 10)
         check("IFS_LOAD by hand is mirrored into AFC (lane4)", ok and mirrored,

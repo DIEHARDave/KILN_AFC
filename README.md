@@ -34,6 +34,7 @@ and restart Klipper.
 | `use_swap` | True | Mid-print changes as one `IFS_SWAP` |
 | `afc_heats` | False | Let AFC pre-heat before loads (Kiln heats anyway) |
 | `sync_materials` | True | Sync lane material/color with `ifs_materials` |
+| `follow_tool_map` | True | Route `T<n>` to the lane of the slot Kiln maps tool n to (`ifs.tool_map`) |
 | `poll_interval` | 1.0 | Seconds between IFS reads |
 | `stable_polls` | 3 | Reads a slot change must hold |
 | `head_sensor` | `adc_filament_sensor toolhead` | Toolhead sensor object |

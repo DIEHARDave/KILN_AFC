@@ -89,6 +89,11 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
 - Outside a print a failed unit move doesn't pause, and then nothing takes
   AFC out of Loading; AFC_IFS sets AFC's error state itself (cleared by
   `RESET_FAILURE`). Worth handling in AFC for all hook units.
+- Tool maps: Kiln maps a print's tools to slots by color
+  (`IFS_MAP_MODE loaded`), AFC kept T1 -> lane2 and paused on an empty
+  lane. AFC_IFS now writes Kiln's `ifs.tool_map` into `afc.tool_cmds`
+  (`SET_MAP` can't express two tools on one slot). Upstream candidate: a
+  unit hook to resolve T<n>, or tool_cmds allowing many tools per lane.
 - Kiln: `FIRMWARE_RESTART`/`RESTART` keep the Python process, so an updated
   plugin module only loads after restarting the Klipper service
   (`/etc/init.d/S61klipper restart`). Plugin updates need a note on this.

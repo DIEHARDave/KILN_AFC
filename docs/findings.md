@@ -5,7 +5,8 @@ What it took to run the full ArmoredTurtle AFC (pinned at
 could move upstream so the Kiln-specific part shrinks to configuration.
 
 Status: emulator-tested (`tests/test_kiln_afc.py`, 22 checks against
-Kiln's real `ifs.py` and a simulated IFS); not yet run on a printer.
+Kiln's real `ifs.py` and a simulated IFS). On an AD5X (Kiln, AFC 5ea84ea)
+since 2026-11-08: PREP, idle unload and load work; no print yet.
 
 ## How it works today
 
@@ -68,6 +69,29 @@ Kiln's real `ifs.py` and a simulated IFS); not yet run on a printer.
    `lane_data` `lane1`-`lane4`. With AFC_IFS syncing materials both write
    the same color and material, but `kiln_lanes` could stand down while
    Klipper has an `AFC` object (as HelixScreen switches backends).
+
+## Hardware notes (AD5X-2)
+
+- PREP matches the IFS: loaded slots, the slot in the toolhead, and Kiln's
+  slot materials and colors in the lanes and in `lane_data`.
+- `T0` with lane1 empty in the head: AFC -> `IFS_LOAD SLOT=1`, 130 s, both
+  sides agree afterwards. An idle change lane1 -> lane4: the
+  `IFS_UNLOAD SLOT=1` worked (118 s); the load of slot 4 failed in Kiln
+  ("filament did not reach the toolhead", 3 retries), a filament-path
+  problem on that slot, not AFC.
+- AFC wants the printer homed before a tool load; Kiln's IFS commands do
+  too, so nothing is lost.
+- AFC renames and wraps Kiln's `PAUSE`, `RESUME`, `UNLOAD_FILAMENT`,
+  `M104` and `M109`; to be checked in a print.
+- AFC starts its Moonraker client only when PREP runs (the `afc_welcome`
+  delayed gcode), so a unit's timers must not call `send_lane_data` before
+  then (fixed in AFC_IFS: it waits for each lane's PREP).
+- Outside a print a failed unit move doesn't pause, and then nothing takes
+  AFC out of Loading; AFC_IFS sets AFC's error state itself (cleared by
+  `RESET_FAILURE`). Worth handling in AFC for all hook units.
+- Kiln: `FIRMWARE_RESTART`/`RESTART` keep the Python process, so an updated
+  plugin module only loads after restarting the Klipper service
+  (`/etc/init.d/S61klipper restart`). Plugin updates need a note on this.
 
 ## Open questions (hardware)
 

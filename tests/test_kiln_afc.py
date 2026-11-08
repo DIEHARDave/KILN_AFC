@@ -282,6 +282,9 @@ def run(args):
         ok, err, out = api.gcode("T1")
         check("T1 back on lane2 after IFS_MAP_TOOL RESET",
               ok and ifs(api).get('channel') == 2, err or ifs(api).get('channel'))
+        check("lane maps back to T0-T3 after RESET",
+              [lane(api, n).get('map') for n in (1, 2, 3, 4)] == ["T0", "T1", "T2", "T3"],
+              [lane(api, n).get('map') for n in (1, 2, 3, 4)])
         api.gcode("TOOL_UNLOAD")
 
         ok, err, out = api.gcode("IFS_LOAD SLOT=4")

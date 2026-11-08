@@ -248,8 +248,17 @@ class afcIFS(afcUnit):
             if self.afc.tool_cmds[tcmd] != lane.name:
                 self.afc.tool_cmds[tcmd] = lane.name
                 moved.append("%s->%s" % (tcmd, lane.name))
+        # Each lane shows (and SET_MAP swaps) its first tool; a lane no tool
+        # maps to keeps its label
+        for lane in self.lanes.values():
+            tools = sorted((k for k, v in self.afc.tool_cmds.items() if v == lane.name),
+                           key=lambda t: int(t[1:]) if t[1:].isdigit() else 99)
+            if tools and lane.map not in tools:
+                lane.map = tools[0]
+                self._send_lane_data(lane)
         if moved:
             self.logger.info("AFC_IFS: following Kiln's tool map: %s" % ", ".join(moved))
+            self.afc.save_vars()
 
     # -- material and color: AFC lanes <-> Kiln's ifs_materials ---------------
 

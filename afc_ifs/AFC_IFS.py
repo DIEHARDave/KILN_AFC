@@ -392,6 +392,13 @@ class afcIFS(afcUnit):
             # Re-read slots from scratch after our move
             self._pending.clear()
 
+    def _fail_state(self):
+        # Outside a print handle_lane_failure doesn't pause, and then nothing
+        # takes AFC out of Loading/Unloading. Set the error state as AFC's
+        # own failures do (pause_print); RESET_FAILURE clears it.
+        if not self.afc.error_state:
+            self.afc.error.set_error_state(True)
+
     def unit_load_lane(self, cur_lane, cur_extruder):
         swap = self._swap_from is not None
         self._swap_from = None
@@ -403,6 +410,7 @@ class afcIFS(afcUnit):
             self.afc.error.handle_lane_failure(
                 cur_lane, "IFS load of %s failed: %s" % (cur_lane.name, err),
                 pause=self.afc.function.in_print())
+            self._fail_state()
             self._sync_tool(st.get('channel') or 0)
             return False
         cur_lane.loaded_to_hub = True
@@ -427,6 +435,7 @@ class afcIFS(afcUnit):
                 self.afc.error.handle_lane_failure(
                     cur_lane, "IFS unload of %s failed: %s" % (cur_lane.name, err),
                     pause=self.afc.function.in_print())
+                self._fail_state()
                 return False
         if self.afc.post_unload_macro is not None:
             self.gcode.run_script_from_command(self.afc.post_unload_macro)

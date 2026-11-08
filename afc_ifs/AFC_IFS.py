@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 import traceback
 from configparser import Error as error
 
@@ -25,6 +26,17 @@ except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.form
 
 try: from extras.AFC_unit import afcUnit
 except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+
+
+# Material names Kiln's IFS_SET_MATERIAL accepts (its parse_material)
+MATERIAL_RE = re.compile(r"^[A-Za-z0-9+_.-]{1,16}$")
+HEX_RE = re.compile(r"^#?([0-9A-Fa-f]{6})")
+
+
+def color_hex(value):
+    """'#RRGGBB' (upper case) from AFC's or Kiln's color, else ''."""
+    m = HEX_RE.match(str(value or '').strip())
+    return '#' + m.group(1).upper() if m else ''
 
 
 class afcIFS(afcUnit):
@@ -44,6 +56,11 @@ class afcIFS(afcUnit):
         # Kiln's IFS commands heat the nozzle for the slot's material and put
         # the old target back; AFC's own pre-heat would only add a wait
         self.afc_heats = config.getboolean('afc_heats', False)
+        # Keep AFC's lane material/color and Kiln's ifs_materials in step
+        self.sync_materials = config.getboolean('sync_materials', True)
+        self.materials_name = config.get('materials', 'ifs_materials')
+        self.materials = None
+        self._synced = {}         # slot -> (type, '#RRGGBB') both sides agree on
         self.load_cmd = config.get('load_cmd', 'IFS_LOAD SLOT={slot}')
         self.unload_cmd = config.get('unload_cmd', 'IFS_UNLOAD SLOT={slot}')
         self.swap_cmd = config.get('swap_cmd', 'IFS_SWAP CHANNEL={slot}')
@@ -70,6 +87,7 @@ class afcIFS(afcUnit):
             raise error("[AFC_IFS %s]: Kiln's [%s] object not found"
                         % (self.name, self.ifs_name))
         self.head_sensor = self.printer.lookup_object(self.head_sensor_name, None)
+        self.materials = self.printer.lookup_object(self.materials_name, None)
         if not self.afc_heats:
             self._skip_afc_preheat()
         for lane in self.lanes.values():
@@ -179,7 +197,81 @@ class afcIFS(afcUnit):
                                   % (lane.name, traceback.format_exc()))
 
         self._sync_tool(st.get('channel') or 0)
+        if self.sync_materials:
+            self._sync_materials(eventtime)
         return eventtime + self.poll_interval
+
+    # -- material and color: AFC lanes <-> Kiln's ifs_materials ---------------
+
+    def _kiln_slots(self, eventtime):
+        if self.materials is None:
+            return {}
+        try:
+            return self.materials.get_status(eventtime).get('slots') or {}
+        except Exception:
+            return {}
+
+    def _apply_kiln(self, lane, slot):
+        mtype = slot.get('type') or ''
+        color = color_hex(slot.get('color'))
+        lane.material = mtype
+        if color:
+            lane.color = color
+        temp = slot.get('temp')
+        if temp:
+            lane.extruder_temp = temp
+        lane.send_lane_data()
+
+    def _push_kiln(self, lane, mtype, color):
+        args = ["SLOT=%d" % self._slot[lane.name]]
+        if mtype and MATERIAL_RE.match(mtype):
+            args.append("TYPE=%s" % mtype)
+        if color:
+            # Bare hex: Klipper takes '#' as the start of a comment
+            args.append("COLOR=%s" % color[1:])
+        if len(args) == 1:
+            return
+        if lane.extruder_temp:
+            args.append("TEMP=%d" % int(float(lane.extruder_temp)))
+        script = "IFS_SET_MATERIAL " + " ".join(args)
+        self.logger.debug("AFC_IFS: " + script)
+
+        def run(eventtime):
+            try:
+                self.gcode.run_script(script)
+            except Exception as e:
+                self.logger.info("AFC_IFS: %s failed: %s" % (script, e))
+        self.reactor.register_callback(run)
+
+    def _sync_materials(self, eventtime):
+        slots = self._kiln_slots(eventtime)
+        if not slots:
+            return
+        changed = False
+        for lane in self.lanes.values():
+            slot = self._slot[lane.name]
+            k = slots.get(str(slot))
+            if k is None or not lane.prep_state:
+                # An empty lane: AFC may clear its values, Kiln keeps the
+                # slot's last material; neither is news for the other side
+                self._synced.pop(slot, None)
+                continue
+            kiln = (k.get('type') or '', color_hex(k.get('color')))
+            afc = (lane.material or '', color_hex(lane.color))
+            agreed = self._synced.get(slot)
+            if agreed is None or kiln != agreed:
+                # First look (Kiln wins), or set on Kiln's side: screen,
+                # IFS_SET_MATERIAL, FF_NFC, ...
+                if afc != kiln:
+                    self._apply_kiln(lane, k)
+                    changed = True
+                self._synced[slot] = kiln
+            elif afc != agreed:
+                # Set on AFC's side: SET_COLOR, SET_MATERIAL, SET_SPOOL_ID
+                self._push_kiln(lane, afc[0], afc[1])
+                self._synced[slot] = afc
+        if changed:
+            self.afc.save_vars()
 
     def _on_ifs_loaded(self, slot):
         # Kiln's "ifs:loaded" fires after every load, unload, swap and
@@ -248,6 +340,15 @@ class afcIFS(afcUnit):
                 msg += 'EMPTY READY FOR SPOOL'
         if assignTcmd:
             self.afc.function.TcmdAssign(cur_lane)
+        if succeeded and self.sync_materials and cur_lane.prep_state:
+            k = self._kiln_slots(self.reactor.monotonic()).get(
+                str(self._slot[cur_lane.name]))
+            if k is not None:
+                self._apply_kiln(cur_lane, k)
+                self._synced[self._slot[cur_lane.name]] = (
+                    k.get('type') or '', color_hex(k.get('color')))
+        # AFC cleared lane_data when PREP started; write this lane back
+        cur_lane.send_lane_data()
         cur_lane.do_enable(False)
         self.logger.info('{lane_name} tool cmd: {tcmd:3} {msg}'.format(
             lane_name=cur_lane.name, tcmd=cur_lane.map, msg=msg))

@@ -63,7 +63,13 @@ class MoonrakerStub(http.server.BaseHTTPRequestHandler):
         self._send({})
     def do_POST(self):
         n = int(self.headers.get('Content-Length') or 0)
-        self.rfile.read(n)
+        body = self.rfile.read(n)
+        try:
+            item = json.loads(body)
+            if item.get('namespace') == 'lane_data':
+                MoonrakerStub.db[item['key']] = item['value']
+        except ValueError:
+            pass
         self._send({})
     def do_DELETE(self):
         self._send({})
@@ -116,7 +122,7 @@ class Api:
         return {o: st.get(o) for o in objects}
 
 LANES = ["AFC_lane lane%d" % i for i in range(1, 5)]
-PROBE_OBJECTS = ", ".join(["ifs", "AFC", "AFC_IFS IFS", "print_stats",
+PROBE_OBJECTS = ", ".join(["ifs", "ifs_materials", "AFC", "AFC_IFS IFS", "print_stats",
                            "AFC_extruder extruder"] + LANES)
 
 TEST_CFG = """
@@ -222,6 +228,26 @@ def run(args):
         check("lane maps T0-T3", [lane(api, n).get('map') for n in range(1, 5)]
               == ["T0", "T1", "T2", "T3"],
               [lane(api, n).get('map') for n in range(1, 5)])
+
+        check("PREP: lane_data written for lane1-4",
+              wait_for(lambda: sorted(MoonrakerStub.db) == ["lane1", "lane2", "lane3", "lane4"], 10),
+              sorted(MoonrakerStub.db))
+
+        def kslot(n):
+            return (api.query("ifs_materials")["ifs_materials"] or {}).get('slots', {}).get(str(n), {})
+        ok, err, out = api.gcode("IFS_SET_MATERIAL SLOT=2 TYPE=PETG COLOR=FF0000")
+        got = wait_for(lambda: (lane(api, 2).get('material'), lane(api, 2).get('color'))
+                       == ('PETG', '#FF0000'), 10)
+        check("Kiln -> AFC: IFS_SET_MATERIAL shows on lane2", ok and got,
+              err or (lane(api, 2).get('material'), lane(api, 2).get('color')))
+        check("Kiln -> AFC: lane_data lane2 updated",
+              wait_for(lambda: MoonrakerStub.db.get('lane2', {}).get('material') == 'PETG', 10),
+              MoonrakerStub.db.get('lane2'))
+        ok, err, out = api.gcode("SET_COLOR LANE=lane3 COLOR=00FF00\n"
+                                 "SET_MATERIAL LANE=lane3 MATERIAL=ABS")
+        got = wait_for(lambda: (kslot(3).get('type'), kslot(3).get('color')) == ('ABS', '#00FF00'), 10)
+        check("AFC -> Kiln: SET_COLOR/SET_MATERIAL reach ifs_materials slot 3", ok and got,
+              err or kslot(3))
 
         ok, err, out = api.gcode("T1")
         check("T1 loads lane2 through IFS_LOAD", ok and ifs(api).get('channel') == 2,

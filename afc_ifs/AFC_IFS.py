@@ -121,7 +121,7 @@ class afcIFS(afcUnit):
     def handle_ready(self):
         super().handle_ready()
         self._poll_timer = self.reactor.register_timer(
-            self._poll, self.reactor.monotonic() + self.poll_interval)
+            self._poll_safe, self.reactor.monotonic() + self.poll_interval)
 
     # -- Kiln state ----------------------------------------------------------
 
@@ -156,14 +156,26 @@ class afcIFS(afcUnit):
         lane.loaded_to_hub = present
         lane._load_state = False
 
+    def _poll_safe(self, eventtime):
+        # An exception in a reactor timer shuts Klipper down; log it instead
+        try:
+            return self._poll(eventtime)
+        except Exception:
+            self.logger.error("AFC_IFS: poll failed\n%s" % traceback.format_exc())
+            return eventtime + max(self.poll_interval, 5.0)
+
     def _poll(self, eventtime):
         if self._busy or self.ifs is None:
             return eventtime + self.poll_interval
         st = self._ifs_status(eventtime)
         if not st or st.get('busy'):
             return eventtime + self.poll_interval
+        if not self._prepped():
+            # AFC connects to Moonraker and reads the lanes at PREP;
+            # system_Test does the first presence, tool and material pass
+            return eventtime + self.poll_interval
 
-        head = self._head_detected(eventtime)
+        head =self._head_detected(eventtime)
         for lane in self.lanes.values():
             if lane.extruder_obj is not None and lane.extruder_obj.tool_start is None:
                 lane.extruder_obj.tool_start_state = head
@@ -201,6 +213,15 @@ class afcIFS(afcUnit):
             self._sync_materials(eventtime)
         return eventtime + self.poll_interval
 
+    def _prepped(self):
+        return bool(self.lanes) and all(
+            getattr(lane, '_afc_prep_done', False) for lane in self.lanes.values())
+
+    def _send_lane_data(self, lane):
+        # AFC's Moonraker client exists only once PREP has started
+        if getattr(self.afc, 'moonraker', None) is not None:
+            lane.send_lane_data()
+
     # -- material and color: AFC lanes <-> Kiln's ifs_materials ---------------
 
     def _kiln_slots(self, eventtime):
@@ -220,7 +241,7 @@ class afcIFS(afcUnit):
         temp = slot.get('temp')
         if temp:
             lane.extruder_temp = temp
-        lane.send_lane_data()
+        self._send_lane_data(lane)
 
     def _push_kiln(self, lane, mtype, color):
         args = ["SLOT=%d" % self._slot[lane.name]]
@@ -276,7 +297,7 @@ class afcIFS(afcUnit):
     def _on_ifs_loaded(self, slot):
         # Kiln's "ifs:loaded" fires after every load, unload, swap and
         # IFS_SET_CHANNEL; ours are accounted for by AFC itself.
-        if self._busy:
+        if self._busy or not self._prepped():
             return
         self.reactor.register_callback(lambda e: self._sync_tool(slot or 0))
 
@@ -348,7 +369,7 @@ class afcIFS(afcUnit):
                 self._synced[self._slot[cur_lane.name]] = (
                     k.get('type') or '', color_hex(k.get('color')))
         # AFC cleared lane_data when PREP started; write this lane back
-        cur_lane.send_lane_data()
+        self._send_lane_data(cur_lane)
         cur_lane.do_enable(False)
         self.logger.info('{lane_name} tool cmd: {tcmd:3} {msg}'.format(
             lane_name=cur_lane.name, tcmd=cur_lane.map, msg=msg))

@@ -94,6 +94,14 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
   lane. AFC_IFS now writes Kiln's `ifs.tool_map` into `afc.tool_cmds`
   (`SET_MAP` can't express two tools on one slot). Upstream candidate: a
   unit hook to resolve T<n>, or tool_cmds allowing many tools per lane.
+- Second cone print: T1 -> slot 4 by Kiln's color matching, one
+  `IFS_SWAP CHANNEL=4` (136 s), no help needed. Assigning a Spoolman spool
+  from the Fluidd AFC panel mid-print worked.
+- HelixScreen caches the AFC lane names at its start: after switching from
+  AFCLite (lanes E0-E3) its print-end `SET_WEIGHT LANE=E1 ...` failed until
+  HelixScreen was restarted. It also looks for `AFC/AFC.cfg`,
+  `AFC_Macro_Vars.cfg` and Moonraker's `afc-install` namespace (written by
+  AFC's installer), which a plugin install doesn't have; only warnings.
 - Kiln: `FIRMWARE_RESTART`/`RESTART` keep the Python process, so an updated
   plugin module only loads after restarting the Klipper service
   (`/etc/init.d/S61klipper restart`). Plugin updates need a note on this.

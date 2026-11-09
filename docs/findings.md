@@ -83,6 +83,16 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
    `lane_data` `lane1`-`lane4`. With AFC_IFS syncing materials both write
    the same color and material, but `kiln_lanes` could stand down while
    Klipper has an `AFC` object (as HelixScreen switches backends).
+3. **One owner of the slot's spool:** Kiln's optional spoolman plugin
+   (`spoolman_slots`) keeps a spool per slot and sets Moonraker's active
+   spool on every `ifs:loaded`; AFC keeps a spool per lane and sets it on
+   its tool loads. Two writers of the active spool log usage against the
+   wrong spool as soon as their lists differ (on AD5X-2 the plugin still
+   had a stale spool for slot 4). AFC_IFS `sync_spools` now keeps both
+   lists the same, but the plugin could stand down while Klipper has an
+   `AFC` object, or read AFC's lane spools, and leave the active spool to
+   AFC. If AFC became part of Kiln, the plugin would remain for printers
+   without it.
 
 ## Hardware notes (AD5X-2)
 

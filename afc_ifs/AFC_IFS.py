@@ -39,6 +39,19 @@ def color_hex(value):
     return '#' + m.group(1).upper() if m else ''
 
 
+# Seconds AFC gets to fetch a spool from Spoolman after SET_SPOOL_ID
+SPOOL_WAIT = 10.0
+
+
+def spool_id(value):
+    """A Spoolman spool ID (int > 0) from AFC's or Kiln's value, else None."""
+    try:
+        sid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return sid if sid > 0 else None
+
+
 class afcIFS(afcUnit):
     def __init__(self, config):
         super().__init__(config)
@@ -61,6 +74,15 @@ class afcIFS(afcUnit):
         self.materials_name = config.get('materials', 'ifs_materials')
         self.materials = None
         self._synced = {}         # slot -> (type, '#RRGGBB') both sides agree on
+        # Keep AFC's lane spools and Kiln's spoolman plugin (spoolman_slots,
+        # which makes a slot's spool active on every IFS load) in step, so
+        # both set the same active spool
+        self.sync_spools = config.getboolean('sync_spools', True)
+        self.spool_slots_name = config.get('spool_slots', 'spoolman_slots')
+        self.spool_slots = None
+        self._spool_synced = {}   # slot -> spool ID (or None) both sides agree on
+        self._spool_wait = {}     # slot -> (spool ID, deadline) while AFC fetches it
+        self._spool_pushed = {}   # slot -> deadline while our SPOOLMAN_SET_SLOT runs
         self.load_cmd = config.get('load_cmd', 'IFS_LOAD SLOT={slot}')
         self.unload_cmd = config.get('unload_cmd', 'IFS_UNLOAD SLOT={slot}')
         self.swap_cmd = config.get('swap_cmd', 'IFS_SWAP CHANNEL={slot}')
@@ -92,6 +114,7 @@ class afcIFS(afcUnit):
                         % (self.name, self.ifs_name))
         self.head_sensor = self.printer.lookup_object(self.head_sensor_name, None)
         self.materials = self.printer.lookup_object(self.materials_name, None)
+        self.spool_slots = self.printer.lookup_object(self.spool_slots_name, None)
         if not self.afc_heats:
             self._skip_afc_preheat()
         for lane in self.lanes.values():
@@ -217,6 +240,8 @@ class afcIFS(afcUnit):
         self._sync_tool(st.get('channel') or 0)
         if self.sync_materials:
             self._sync_materials(eventtime)
+        if self.sync_spools:
+            self._sync_spools(eventtime)
         return eventtime + self.poll_interval
 
     def _prepped(self):
@@ -336,6 +361,81 @@ class afcIFS(afcUnit):
                 self._synced[slot] = afc
         if changed:
             self.afc.save_vars()
+
+    # -- spools: AFC lanes <-> Kiln's spoolman plugin (spoolman_slots) --------
+
+    def _run_later(self, *scripts):
+        def run(eventtime):
+            for script in scripts:
+                self.logger.debug("AFC_IFS: " + script)
+                try:
+                    self.gcode.run_script(script)
+                except Exception as e:
+                    self.logger.info("AFC_IFS: %s failed: %s" % (script, e))
+        self.reactor.register_callback(run)
+
+    def _sync_spools(self, eventtime):
+        """Both sides keep a spool per slot and set Moonraker's active spool
+        on a load: AFC on its tool loads, the plugin on every Kiln
+        ifs:loaded. AFC wins on the first look; after that a change on
+        either side is copied to the other."""
+        if self.spool_slots is None or getattr(self.afc, 'spoolman', None) is None:
+            return
+        try:
+            kiln_slots = self.spool_slots.get_status(eventtime).get('slots') or {}
+        except Exception:
+            return
+        for lane in self.lanes.values():
+            slot = self._slot[lane.name]
+            if str(slot) not in kiln_slots:
+                continue
+            kiln = spool_id(kiln_slots.get(str(slot)))
+            afc = spool_id(lane.spool_id)
+            wait = self._spool_wait.get(slot)
+            if wait is not None:
+                # AFC fetches a spool from Spoolman after SET_SPOOL_ID returns
+                sid, deadline = wait
+                if afc != sid and eventtime < deadline:
+                    continue
+                del self._spool_wait[slot]
+                if afc != sid:
+                    self.logger.info("AFC_IFS: AFC did not take spool %s for %s; Kiln's"
+                                     " spoolman slot %d follows AFC" % (sid, lane.name, slot))
+                self._spool_synced[slot] = sid
+            pushed = self._spool_pushed.get(slot)
+            if pushed is not None:
+                # Our SPOOLMAN_SET_SLOT may not have run yet
+                if kiln != self._spool_synced.get(slot) and eventtime < pushed:
+                    continue
+                del self._spool_pushed[slot]
+            if slot not in self._spool_synced:
+                self._spool_synced[slot] = afc
+                if kiln != afc:
+                    self._push_spool(slot, afc, eventtime)
+            elif kiln != self._spool_synced[slot]:
+                # Set on Kiln's side: SPOOLMAN_SET_SLOT, the screen, ...
+                self._spool_synced[slot] = kiln
+                if afc != kiln:
+                    self._apply_spool(lane, slot, kiln, eventtime)
+            elif afc != self._spool_synced[slot]:
+                # Set on AFC's side: SET_SPOOL_ID, the AFC panels, FF_NFC, runout
+                self._spool_synced[slot] = afc
+                self._push_spool(slot, afc, eventtime)
+
+    def _push_spool(self, slot, sid, eventtime):
+        self._spool_pushed[slot] = eventtime + SPOOL_WAIT
+        self._run_later("SPOOLMAN_SET_SLOT SLOT=%d SPOOL=%s" % (slot, sid or ''))
+
+    def _apply_spool(self, lane, slot, sid, eventtime):
+        scripts = []
+        if sid is not None:
+            # AFC refuses a spool another lane still has: it moved
+            for other in self.afc.lanes.values():
+                if other is not lane and spool_id(other.spool_id) == sid:
+                    scripts.append("SET_SPOOL_ID LANE=%s SPOOL_ID=" % other.name)
+        scripts.append("SET_SPOOL_ID LANE=%s SPOOL_ID=%s" % (lane.name, sid or ''))
+        self._spool_wait[slot] = (sid, eventtime + SPOOL_WAIT)
+        self._run_later(*scripts)
 
     def _on_ifs_loaded(self, slot):
         # Kiln's "ifs:loaded" fires after every load, unload, swap and

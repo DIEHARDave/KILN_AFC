@@ -2,14 +2,16 @@
 
 ArmoredTurtle's [AFC-Klipper-Add-On](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On)
 on Kiln OS, with the AD5X IFS as an AFC unit. **Prototype: emulator-tested,
-not yet run on a printer.** Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite)
+and running on one AD5X since 2026-11-08 (idle changes and two-color
+prints).** Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite)
 (the two conflict).
 
 AFC owns the tool changes (T0-T3, `CHANGE_TOOL`, `TOOL_UNLOAD`,
 `LANE_UNLOAD`, runout lanes, stats, the AFC panels). Kiln's IFS commands do
 the filament work: `IFS_LOAD`, `IFS_UNLOAD`, `IFS_SWAP` (mid-print changes),
 `IFS_EJECT`. Lane material and color stay in step with Kiln's
-`ifs_materials` both ways.
+`ifs_materials` both ways, lane spools with Kiln's spoolman plugin
+([Spoolman](#spoolman)).
 
 How it fits together and what could move into AFC or Kiln:
 [docs/findings.md](docs/findings.md).
@@ -39,11 +41,29 @@ this plugin does its job (module paths, config).
 | `use_swap` | True | Mid-print changes as one `IFS_SWAP` |
 | `afc_heats` | False | Let AFC pre-heat before loads (Kiln heats anyway) |
 | `sync_materials` | True | Sync lane material/color with `ifs_materials` |
+| `sync_spools` | True | Sync lane Spoolman spools with Kiln's spoolman plugin (below) |
 | `follow_tool_map` | True | Route `T<n>` to the lane of the slot Kiln maps tool n to (`ifs.tool_map`) |
 | `poll_interval` | 1.0 | Seconds between IFS reads |
 | `stable_polls` | 3 | Reads a slot change must hold |
 | `head_sensor` | `adc_filament_sensor toolhead` | Toolhead sensor object |
 | `load_cmd`, `unload_cmd`, `swap_cmd`, `eject_cmd` | `IFS_LOAD SLOT={slot}`, ... | Commands per move |
+
+## Spoolman
+
+AFC keeps a Spoolman spool per lane (`SET_SPOOL_ID`, the AFC panels,
+[FF_NFC](https://github.com/DIEHARDave/FF_NFC) tag scans) and makes it
+Moonraker's active spool on each tool load, so usage is logged against
+it. Kiln's optional spoolman plugin (`[spoolman_slots]`) does the same per
+IFS slot on every IFS load. With `sync_spools`, the two stay in step: AFC's
+spools win when Klipper starts, and later a spool set on either side
+(`SET_SPOOL_ID` or `SPOOLMAN_SET_SLOT`) is copied to the other, so both
+always pick the same active spool. A spool set on a slot while another
+lane has it moves off that lane. If AFC refuses a spool (one Spoolman has
+as empty, unless `[AFC] disable_weight_check`), the plugin's slot follows
+AFC again.
+
+Neither is needed for tracking itself: that is Moonraker's `[spoolman]`
+in moonraker.conf.
 
 ## Tests
 

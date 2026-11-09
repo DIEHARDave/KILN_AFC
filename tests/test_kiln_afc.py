@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 PLUGIN = os.path.dirname(HERE)
@@ -39,6 +40,12 @@ def check(name, ok, detail=""):
 
 # -- Moonraker stub: what AFC asks for ---------------------------------------
 
+# Spoolman behind Moonraker's proxy; spool 9 is used up (AFC refuses it)
+SPOOLS = {n: {'id': n, 'remaining_weight': w, 'initial_weight': 1000, 'spool_weight': 190,
+              'filament': {'name': 'Test %d' % n, 'material': 'PLA', 'color_hex': c,
+                           'vendor': {'name': 'Test'}}}
+          for n, w, c in ((5, 800.0, '112233'), (6, 600.0, '445566'), (9, 0.0, '778899'))}
+
 class MoonrakerStub(http.server.BaseHTTPRequestHandler):
     db = {}
     def log_message(self, *a):
@@ -55,7 +62,8 @@ class MoonrakerStub(http.server.BaseHTTPRequestHandler):
         if p.startswith('/server/info'):
             return self._send({'klippy_state': 'ready'})
         if p.startswith('/server/config'):
-            return self._send({'orig': {}, 'config': {}})
+            return self._send({'orig': {'spoolman': {'server': 'http://127.0.0.1:1'}},
+                               'config': {}})
         if p.startswith('/server/database/item'):
             return self._send({'value': {}})
         if p.startswith('/server/files/metadata'):
@@ -64,6 +72,14 @@ class MoonrakerStub(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(n)
+        if self.path.startswith('/server/spoolman/proxy'):
+            q = urllib.parse.parse_qs(body.decode())
+            sid = int(q.get('path', ['/v1/spool/0'])[0].rsplit('/', 1)[1])
+            if sid not in SPOOLS:
+                self.send_response(404)
+                self.end_headers()
+                return
+            return self._send(SPOOLS[sid])
         try:
             item = json.loads(body)
             if item.get('namespace') == 'lane_data':
@@ -123,12 +139,15 @@ class Api:
 
 LANES = ["AFC_lane lane%d" % i for i in range(1, 5)]
 PROBE_OBJECTS = ", ".join(["ifs", "ifs_materials", "AFC", "AFC_IFS IFS", "print_stats",
+                           "spoolman_slots",
                            "AFC_extruder extruder"] + LANES)
 
 TEST_CFG = """
 [filament_switch_sensor toolhead]
 switch_pin: gpio20
 pause_on_runout: False
+
+[spoolman_slots]
 """
 
 def plugin_cfg(args):
@@ -250,6 +269,33 @@ def run(args):
         check("AFC -> Kiln: SET_COLOR/SET_MATERIAL reach ifs_materials slot 3", ok and got,
               err or kslot(3))
 
+        # Spools: AFC lanes <-> Kiln's spoolman plugin
+        def kspool(n):
+            return ((api.query("spoolman_slots")["spoolman_slots"] or {})
+                    .get('slots', {}).get(str(n)))
+        ok, err, out = api.gcode("SET_SPOOL_ID LANE=lane2 SPOOL_ID=5")
+        got = wait_for(lambda: lane(api, 2).get('spool_id') == 5 and kspool(2) == 5, 15)
+        check("AFC -> Kiln: SET_SPOOL_ID lane2 reaches spoolman_slots slot 2", ok and got,
+              err or (lane(api, 2).get('spool_id'), kspool(2)))
+        ok, err, out = api.gcode("SPOOLMAN_SET_SLOT SLOT=3 SPOOL=6")
+        got = wait_for(lambda: lane(api, 3).get('spool_id') == 6, 15)
+        check("Kiln -> AFC: SPOOLMAN_SET_SLOT slot 3 shows on lane3", ok and got,
+              err or lane(api, 3).get('spool_id'))
+        ok, err, out = api.gcode("SPOOLMAN_SET_SLOT SLOT=4 SPOOL=5")
+        got = wait_for(lambda: (lane(api, 4).get('spool_id'), lane(api, 2).get('spool_id'),
+                                kspool(2)) == (5, None, None), 15)
+        check("Kiln -> AFC: a spool set on slot 4 moves off lane2 (both sides)", ok and got,
+              err or (lane(api, 4).get('spool_id'), lane(api, 2).get('spool_id'), kspool(2)))
+        ok, err, out = api.gcode("SPOOLMAN_SET_SLOT SLOT=1 SPOOL=9")
+        time.sleep(3)
+        got = wait_for(lambda: kspool(1) is None and lane(api, 1).get('spool_id') is None, 20)
+        check("an empty spool AFC refuses: slot 1 follows AFC back to none", ok and got,
+              err or (lane(api, 1).get('spool_id'), kspool(1)))
+        api.gcode("SET_SPOOL_ID LANE=lane3 SPOOL_ID=\nSET_SPOOL_ID LANE=lane4 SPOOL_ID=")
+        got = wait_for(lambda: [kspool(n) for n in (1, 2, 3, 4)] == [None] * 4, 15)
+        check("clearing AFC's spools clears spoolman_slots", got,
+              [kspool(n) for n in (1, 2, 3, 4)])
+
         ok, err, out = api.gcode("T1")
         check("T1 loads lane2 through IFS_LOAD", ok and ifs(api).get('channel') == 2,
               err or ifs(api).get('channel'))
@@ -345,7 +391,8 @@ def main():
     extras = os.path.join(os.path.expanduser(args.klipper), "klippy", "extras")
     links = {"ifs.py": os.path.join(HERE, "kiln_files", "ifs.py"),
              "kiln_test_probe.py": os.path.join(args.emu, "klipper_test", "kiln_test_probe.py"),
-             "kiln_afc.py": os.path.join(PLUGIN, "extras", "kiln_afc.py")}
+             "kiln_afc.py": os.path.join(PLUGIN, "extras", "kiln_afc.py"),
+             "spoolman_slots.py": os.path.join(HERE, "kiln_files", "spoolman_slots.py")}
     for name, target in links.items():
         path = os.path.join(extras, name)
         if os.path.lexists(path):

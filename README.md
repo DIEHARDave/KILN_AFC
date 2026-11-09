@@ -28,8 +28,10 @@ su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/KILN_AFC afc"
 
 Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts, and on that
 first start the plugin clones AFC (ArmoredTurtle's repository, about 16 MB)
-at the commit in `AFC_COMMIT`, so it takes a little longer. Home the
-printer (`G28`) before the first tool change.
+at the commit in `AFC_COMMIT`, so it takes a little longer. A tool load
+or unload homes the printer first when it isn't homed (AFC's `auto_home`;
+set `auto_home: False` under `[AFC]` in local.cfg to get AFC's "Please
+home printer" error instead).
 
 ## Updates
 

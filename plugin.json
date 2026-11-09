@@ -1,7 +1,7 @@
 {
   "name": "afc",
   "description": "ArmoredTurtle AFC-Klipper-Add-On with the AD5X IFS as an AFC unit; Kiln does the loads, unloads and swaps",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "DIEHARDave",
   "url": "https://github.com/DIEHARDave/KILN_AFC",
   "requires_os": "1.3",

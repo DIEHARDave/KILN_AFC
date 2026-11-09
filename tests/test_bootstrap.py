@@ -239,5 +239,23 @@ class AfcCheckout(unittest.TestCase):
             self.sync("not a commit")
 
 
+class ForgetModules(unittest.TestCase):
+    """RESTART reloads AFC: its cached modules are dropped (_forget_modules)."""
+    def test_drops_only_afc_modules(self):
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("AFC_fake_one", "AFC_fake_two"):
+                open(os.path.join(d, n + ".py"), "w").close()
+            open(os.path.join(d, "notes.txt"), "w").close()
+            sys.modules["extras.AFC_fake_one"] = object()
+            sys.modules["extras.unrelated_fake"] = object()
+            try:
+                got = kiln_afc._forget_modules([d, os.path.join(d, "missing")])
+                self.assertEqual(got, ["AFC_fake_one"])
+                self.assertNotIn("extras.AFC_fake_one", sys.modules)
+                self.assertIn("extras.unrelated_fake", sys.modules)
+            finally:
+                sys.modules.pop("extras.unrelated_fake", None)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

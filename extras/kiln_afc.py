@@ -217,6 +217,21 @@ def _add_paths(afc_dir):
     return dirs
 
 
+def _forget_modules(dirs):
+    """Drop AFC's modules (and AFC_IFS) that an earlier Klipper start in
+    this process imported, so RESTART loads the files on disk: Klipper keeps
+    imported modules across RESTART, and Kiln's Moonraker can't restart the
+    Klipper service after an update (provider: none). Returns the names."""
+    names = set()
+    for d in dirs:
+        try:
+            names.update(fn[:-3] for fn in os.listdir(d) if fn.endswith('.py'))
+        except OSError:
+            pass
+    return sorted(n for n in names
+                  if sys.modules.pop('extras.' + n, None) is not None)
+
+
 def _teach_unit_type():
     # AFC keeps per-type behavior in module-level lists; IFS lanes behave
     # like OpenAMS lanes (one sensor per lane, no lane stepper).
@@ -251,6 +266,9 @@ class KilnAFC:
                 "kiln_afc: no AFC checkout at %s. Run install.sh in the "
                 "plugin folder (it clones AFC-Klipper-Add-On)." % self.afc_dir)
         self.dirs = _add_paths(self.afc_dir)
+        reloaded = _forget_modules(self.dirs)
+        if reloaded:
+            logging.info("kiln_afc: reloading %d AFC modules", len(reloaded))
         _teach_unit_type()
         self._prepare_varfile(config)
         self._orig_load_object = printer.load_object

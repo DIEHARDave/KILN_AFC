@@ -34,13 +34,13 @@ printer (`G28`) before the first tool change.
 ## Updates
 
 Mainsail or Fluidd, Software Updates, entry **kiln-afc** (release tags
-only). The update restarts the Klipper service, and the plugin then moves
-its AFC checkout to the release's `AFC_COMMIT` (fetching it if needed)
-before AFC loads.
+only), then `RESTART` with the printer idle. At that start the plugin
+loads its new code, moves its AFC checkout to the release's `AFC_COMMIT`
+(fetching it if needed) and reloads AFC. Kiln's Moonraker can't restart
+Klipper itself, so the update doesn't.
 
 By hand: `git pull` in `/data/ad5x/plugins/afc` as the klipper user, then
-`/etc/init.d/S61klipper restart`. `RESTART` and `FIRMWARE_RESTART` are not
-enough after an update: they keep the already loaded Python modules.
+`RESTART`.
 
 An `afc_path:` in `[kiln_afc]` points the plugin at an AFC checkout of your
 own; that one is left as it is.

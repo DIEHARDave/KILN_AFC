@@ -1,5 +1,6 @@
-"""kiln_afc replacing KILN_AFCLite: plugins.cfg, the plugin folder, the
-Moonraker include and the spool hand-over, against fake Kiln folders.
+"""kiln_afc: replacing KILN_AFCLite plugins.cfg, the plugin folder, the
+Moonraker include and the spool hand-over, against fake Kiln folders;
+and the AFC checkout following AFC_COMMIT, against a local git repo.
 
     python3 tests/test_retire_afclite.py
 
@@ -8,6 +9,7 @@ No Klipper needed (kiln_afc imports nothing of Klipper's at load).
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -61,7 +63,7 @@ class Config:
     def get_printer(self):
         return self.printer
     def get(self, key, default=None):
-        return default
+        return self.sections.get('kiln_afc', {}).get(key, default)
 
 
 def plugin(base, name):
@@ -100,6 +102,7 @@ class Retire(unittest.TestCase):
                              'moonraker_restart_file': self.restart},
             'AFC': {'VarFile': self.var},
             'save_variables': {'filename': self.vars},
+            'kiln_afc': {'afc_path': os.path.join(t, 'no-afc')},
         }
     def tearDown(self):
         self.tmp.cleanup()
@@ -179,6 +182,61 @@ class Retire(unittest.TestCase):
             kiln_afc.KilnAFC(cfg2)
         self.assertIn("no AFC checkout", str(e.exception))
         self.assertEqual(cfg2.printer.reactor.callbacks, [])
+
+
+def git(*args, cwd=None):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t"] + list(args),
+                   cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL).stdout.decode().strip()
+
+
+class AfcCheckout(unittest.TestCase):
+    """The plugin's AFC checkout follows AFC_COMMIT (sync_afc_checkout)."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = self.tmp.name
+        self.repo = os.path.join(t, "AFC-upstream")
+        os.makedirs(self.repo)
+        git("init", "-q", cwd=self.repo)
+        open(os.path.join(self.repo, "AFC.py"), "w").write("v1\n")
+        git("add", ".", cwd=self.repo)
+        self.c1 = git("commit", "-qm", "one", cwd=self.repo)
+        self.dest = os.path.join(t, "plugin", "AFC-Klipper-Add-On")
+        self.commit_file = os.path.join(t, "AFC_COMMIT")
+    def tearDown(self):
+        self.tmp.cleanup()
+    def sync(self, commit):
+        open(self.commit_file, "w").write(commit + "\n")
+        return kiln_afc.sync_afc_checkout(self.dest, self.commit_file, "file://" + self.repo)
+    def head(self):
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.dest,
+                              stdout=subprocess.PIPE).stdout.decode().strip()
+
+    def test_clone_update_and_noop(self):
+        self.assertIn("new", self.sync(self.c1))
+        self.assertEqual(self.head(), self.c1)
+        self.assertIsNone(self.sync(self.c1))
+        self.assertIsNone(self.sync(self.c1[:7]))
+        # A newer upstream commit: fetched, then checked out
+        open(os.path.join(self.repo, "AFC.py"), "w").write("v2\n")
+        c2 = git("commit", "-qam", "two", cwd=self.repo)
+        note = self.sync(c2)
+        self.assertEqual(note, "AFC %s -> %s" % (self.c1[:7], c2[:7]))
+        self.assertEqual(open(os.path.join(self.dest, "AFC.py")).read(), "v2\n")
+        # Back to the older pin (no network needed)
+        self.sync(self.c1)
+        self.assertEqual(self.head(), self.c1)
+
+    def test_unknown_commit(self):
+        self.sync(self.c1)
+        with self.assertRaises(RuntimeError):
+            self.sync("0123456789abcdef0123456789abcdef01234567")
+        self.assertEqual(self.head(), self.c1)
+
+    def test_bad_commit_file(self):
+        with self.assertRaises(RuntimeError):
+            self.sync("not a commit")
 
 
 if __name__ == "__main__":

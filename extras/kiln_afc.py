@@ -26,10 +26,17 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 DEFAULT_AFC_DIR = os.path.join(PLUGIN_DIR, 'AFC-Klipper-Add-On')
+# The AFC commit this plugin is tested with; the plugin's own checkout
+# (DEFAULT_AFC_DIR) is brought to it at each Klipper start, so a plugin
+# update from Moonraker's update manager also updates AFC
+AFC_COMMIT_FILE = os.path.join(PLUGIN_DIR, 'AFC_COMMIT')
+AFC_REPO = 'https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git'
+GIT_TIMEOUT = 300
 UNIT_DIR = os.path.join(PLUGIN_DIR, 'afc_ifs')
 IFS_TYPE = 'IFS'
 
@@ -50,6 +57,48 @@ INCLUDE_RE = re.compile(r"^\s*\[include\s+\S*/(?P<name>[A-Za-z0-9_.-]+)/"
 # AFC_IFS reads this next to AFC's VarFile: lane spools to keep at its
 # first spool sync (afclite's, or Kiln's spoolman slots)
 SEED_SUFFIX = '.afclite-spools.json'
+
+
+def _git(args, cwd=None, timeout=GIT_TIMEOUT):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    env.setdefault('HOME', '/home/klipper')
+    try:
+        r = subprocess.run(['git'] + args, cwd=cwd, env=env,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, str(e)
+    return r.returncode, r.stdout.decode('utf-8', 'replace').strip()
+
+
+def sync_afc_checkout(afc_dir, commit_file=AFC_COMMIT_FILE, repo=AFC_REPO):
+    """Clone AFC into afc_dir if it isn't there and check out the commit in
+    commit_file (fetching it when it's new). Returns what changed, or None.
+    Raises RuntimeError when git fails."""
+    with open(commit_file) as f:
+        want = f.read().strip().lower()
+    if not re.match(r'^[0-9a-f]{7,40}$', want):
+        raise RuntimeError("%s holds no commit" % commit_file)
+    if not os.path.isdir(os.path.join(afc_dir, '.git')):
+        rc, out = _git(['clone', '--quiet', repo, afc_dir])
+        if rc:
+            raise RuntimeError("git clone %s failed: %s" % (repo, out[-300:]))
+        before = None
+    else:
+        rc, before = _git(['rev-parse', 'HEAD'], cwd=afc_dir, timeout=30)
+        if rc == 0 and before.lower().startswith(want):
+            return None
+    rc, out = _git(['checkout', '--quiet', want], cwd=afc_dir, timeout=60)
+    if rc:
+        # A commit newer than the checkout
+        rc, out = _git(['fetch', '--quiet', 'origin'], cwd=afc_dir)
+        if rc:
+            raise RuntimeError("git fetch failed: %s" % (out[-300:],))
+        rc, out = _git(['checkout', '--quiet', want], cwd=afc_dir, timeout=60)
+        if rc:
+            raise RuntimeError("git checkout %s failed: %s"
+                               % (want[:7], out[-300:]))
+    return "AFC %s -> %s" % ((before or 'new')[:7], want[:7])
 
 
 def _write_atomic(path, text):
@@ -183,7 +232,20 @@ class KilnAFC:
     def __init__(self, config):
         self.printer = printer = config.get_printer()
         self._retire_afclite(config)
-        self.afc_dir = config.get('afc_path', DEFAULT_AFC_DIR)
+        afc_path = config.get('afc_path', None)
+        self.afc_dir = afc_path or DEFAULT_AFC_DIR
+        if afc_path is None:
+            # The plugin's own checkout follows AFC_COMMIT (an afc_path of
+            # your own is left as it is)
+            try:
+                note = sync_afc_checkout(self.afc_dir)
+            except (OSError, RuntimeError) as e:
+                raise config.error(
+                    "kiln_afc: can't bring AFC to the commit in AFC_COMMIT: "
+                    "%s. Check the network, then restart Klipper "
+                    "(/etc/init.d/S61klipper restart)." % (e,))
+            if note:
+                logging.info("kiln_afc: %s", note)
         if not os.path.isfile(os.path.join(self.afc_dir, 'extras', 'AFC.py')):
             raise config.error(
                 "kiln_afc: no AFC checkout at %s. Run install.sh in the "

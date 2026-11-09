@@ -1,9 +1,10 @@
 # KILN_AFC
 
 ArmoredTurtle's [AFC-Klipper-Add-On](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On)
-on Kiln OS, with the AD5X IFS as an AFC unit. **Prototype: emulator-tested,
-and running on one AD5X since 2026-11-08 (idle changes and two-color
-prints).** Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite):
+on Kiln OS, with the AD5X IFS as an AFC unit. **Testing release: running
+on one AD5X since 2026-11-08 (idle changes, two-color prints, Spoolman).
+Reports welcome in [Issues](https://github.com/DIEHARDave/KILN_AFC/issues).**
+Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite):
 enabling this plugin disables and deletes afclite ([below](#coming-from-afclite)).
 
 AFC owns the tool changes (T0-T3, `CHANGE_TOOL`, `TOOL_UNLOAD`,
@@ -16,17 +17,33 @@ the filament work: `IFS_LOAD`, `IFS_UNLOAD`, `IFS_SWAP` (mid-print changes),
 How it fits together and what could move into AFC or Kiln:
 [docs/findings.md](docs/findings.md).
 
-## Install (manual for now)
+## Install
+
+Over SSH as root, with the printer idle:
 
 ```sh
 cd /data/ad5x/plugins
 su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/KILN_AFC afc"
-su -s /bin/sh klipper -c "sh /data/ad5x/plugins/afc/install.sh"   # clones AFC at AFC_COMMIT (AFC DEV)
 ```
 
-Then `ENABLE_PLUGIN NAME=afc`. After updating the plugin or `AFC_COMMIT`, restart the
-Klipper service (`/etc/init.d/S61klipper restart`): `RESTART` and
-`FIRMWARE_RESTART` keep the already loaded Python modules.
+Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts, and on that
+first start the plugin clones AFC (ArmoredTurtle's repository, about 16 MB)
+at the commit in `AFC_COMMIT`, so it takes a little longer. Home the
+printer (`G28`) before the first tool change.
+
+## Updates
+
+Mainsail or Fluidd, Software Updates, entry **kiln-afc** (release tags
+only). The update restarts the Klipper service, and the plugin then moves
+its AFC checkout to the release's `AFC_COMMIT` (fetching it if needed)
+before AFC loads.
+
+By hand: `git pull` in `/data/ad5x/plugins/afc` as the klipper user, then
+`/etc/init.d/S61klipper restart`. `RESTART` and `FIRMWARE_RESTART` are not
+enough after an update: they keep the already loaded Python modules.
+
+An `afc_path:` in `[kiln_afc]` points the plugin at an AFC checkout of your
+own; that one is left as it is.
 
 Don't run AFC's `install-afc.sh` on Kiln: Klipper is read-only there, and
 this plugin does its job (module paths, config).
@@ -89,8 +106,8 @@ python3 tests/test_kiln_afc.py --klipper ~/kiln-klipper \
     --python ~/klippy-test-env/bin/python
 ```
 
-`python3 tests/test_retire_afclite.py` checks the afclite removal on
-its own (no Klipper).
+`python3 tests/test_bootstrap.py` checks the afclite removal and the AFC
+checkout following `AFC_COMMIT` on their own (no Klipper).
 
 Linux (WSL works). Uses Kiln's `ifs.py` from `tests/kiln_files` and
 KILN_IFSJacker's `fake_ifs.py` and `kiln_test_probe.py`.

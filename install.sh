@@ -1,5 +1,6 @@
 #!/bin/sh
-# Clone AFC-Klipper-Add-On into this plugin folder at the tested commit and
+# Optional: the plugin clones AFC itself at Klipper start. This does it by
+# hand: clone AFC-Klipper-Add-On into this plugin folder at the tested commit and
 # create AFC's config folder. Run as the klipper user (Kiln: plugins and
 # printer_data belong to klipper):
 #   su -s /bin/sh klipper -c "sh /data/ad5x/plugins/afc/install.sh"

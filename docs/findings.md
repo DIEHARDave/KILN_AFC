@@ -102,6 +102,12 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
   HelixScreen was restarted. It also looks for `AFC/AFC.cfg`,
   `AFC_Macro_Vars.cfg` and Moonraker's `afc-install` namespace (written by
   AFC's installer), which a plugin install doesn't have; only warnings.
+- Mainsail's AFC panel: a lane card is as wide as its `T0 > LANE1` header
+  chip (no-wrap), so four lanes wrap 3 + 1 in a normal column; with
+  AFCLite's names (`T0 > E0`) they fit. Tested in the live page by
+  shortening the chips. Candidate for Mainsail: let the chip shrink or
+  ellipsize. Lane names stay `lane1`-`lane4` (lane_data keys, Kiln's
+  kiln_lanes writes the same keys).
 - Kiln: `FIRMWARE_RESTART`/`RESTART` keep the Python process, so an updated
   plugin module only loads after restarting the Klipper service
   (`/etc/init.d/S61klipper restart`). Plugin updates need a note on this.

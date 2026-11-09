@@ -1,6 +1,6 @@
 # KILN_AFC
 
-ArmoredTurtle's [AFC-Klipper-Add-On](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On)
+[AFC-Klipper-Add-On](https://github.com/AFCProject/AFC-Klipper-Add-On) (the AFC Project)
 on Kiln OS, with the AD5X IFS as an AFC unit. **Testing release: running
 on one AD5X since 2026-11-08 (idle changes, two-color prints, Spoolman).
 Reports welcome in [Issues](https://github.com/DIEHARDave/KILN_AFC/issues).**
@@ -27,7 +27,7 @@ su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/KILN_AFC afc"
 ```
 
 Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts, and on that
-first start the plugin clones AFC (ArmoredTurtle's repository, about 16 MB)
+first start the plugin clones AFC (the AFC Project's repository, about 16 MB)
 at the commit in `AFC_COMMIT`, so it takes a little longer. A tool load
 or unload homes the printer first when it isn't homed (AFC's `auto_home`;
 set `auto_home: False` under `[AFC]` in local.cfg to get AFC's "Please

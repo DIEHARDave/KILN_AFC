@@ -1,4 +1,4 @@
-# KILN_AFC bootstrap: runs ArmoredTurtle's AFC-Klipper-Add-On on Kiln OS.
+# KILN_AFC bootstrap: runs AFC-Klipper-Add-On (the AFC Project) on Kiln OS.
 #
 # Kiln's Klipper lives on a read-only squashfs, so AFC's modules cannot be
 # linked into klippy/extras the way install-afc.sh does it. Kiln's plugin
@@ -35,7 +35,7 @@ DEFAULT_AFC_DIR = os.path.join(PLUGIN_DIR, 'AFC-Klipper-Add-On')
 # (DEFAULT_AFC_DIR) is brought to it at each Klipper start, so a plugin
 # update from Moonraker's update manager also updates AFC
 AFC_COMMIT_FILE = os.path.join(PLUGIN_DIR, 'AFC_COMMIT')
-AFC_REPO = 'https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git'
+AFC_REPO = 'https://github.com/AFCProject/AFC-Klipper-Add-On.git'
 GIT_TIMEOUT = 300
 UNIT_DIR = os.path.join(PLUGIN_DIR, 'afc_ifs')
 IFS_TYPE = 'IFS'
@@ -85,6 +85,11 @@ def sync_afc_checkout(afc_dir, commit_file=AFC_COMMIT_FILE, repo=AFC_REPO):
             raise RuntimeError("git clone %s failed: %s" % (repo, out[-300:]))
         before = None
     else:
+        # Older installs cloned AFC from ArmoredTurtle/; it lives at
+        # AFCProject/ now (GitHub redirects, but fetch from the real place)
+        rc, url = _git(['remote', 'get-url', 'origin'], cwd=afc_dir, timeout=30)
+        if rc == 0 and url != repo:
+            _git(['remote', 'set-url', 'origin', repo], cwd=afc_dir, timeout=30)
         rc, before = _git(['rev-parse', 'HEAD'], cwd=afc_dir, timeout=30)
         if rc == 0 and before.lower().startswith(want):
             return None

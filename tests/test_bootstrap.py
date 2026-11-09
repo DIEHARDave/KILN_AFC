@@ -228,6 +228,15 @@ class AfcCheckout(unittest.TestCase):
         self.sync(self.c1)
         self.assertEqual(self.head(), self.c1)
 
+    def test_origin_moved(self):
+        self.sync(self.c1)
+        subprocess.run(["git", "remote", "set-url", "origin", "https://example.invalid/old.git"],
+                       cwd=self.dest, check=True)
+        self.assertIsNone(self.sync(self.c1))
+        url = subprocess.run(["git", "remote", "get-url", "origin"], cwd=self.dest,
+                             stdout=subprocess.PIPE).stdout.decode().strip()
+        self.assertEqual(url, "file://" + self.repo)
+
     def test_unknown_commit(self):
         self.sync(self.c1)
         with self.assertRaises(RuntimeError):

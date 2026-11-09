@@ -1,6 +1,6 @@
 # Running AFC-Klipper-Add-On on Kiln OS: findings
 
-What it took to run the full ArmoredTurtle AFC (pinned at
+What it took to run the full AFC-Klipper-Add-On (pinned at
 `AFC_COMMIT`, AFC's DEV branch since 2026-11-08) on Kiln OS with the Flashforge IFS as an AFC unit, and what
 could move upstream so the Kiln-specific part shrinks to configuration.
 

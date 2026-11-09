@@ -226,11 +226,12 @@ def run(args):
         check("PREP: lanes 1-4 Loaded from ifs.loaded_channels", prepped,
               [lane(api, n).get('status') for n in range(1, 5)])
         check("lane maps T0-T3", [lane(api, n).get('map') for n in range(1, 5)]
-              == ["T0", "T1", "T2", "T3"],
+              == [["T0"], ["T1"], ["T2"], ["T3"]],
               [lane(api, n).get('map') for n in range(1, 5)])
 
-        check("PREP: lane_data written for lane1-4",
-              wait_for(lambda: sorted(MoonrakerStub.db) == ["lane1", "lane2", "lane3", "lane4"], 10),
+        # AFC DEV keys lane_data by T(n), one record per mapped tool
+        check("PREP: lane_data written for T0-T3",
+              wait_for(lambda: sorted(MoonrakerStub.db) == ["T0", "T1", "T2", "T3"], 10),
               sorted(MoonrakerStub.db))
 
         def kslot(n):
@@ -240,9 +241,9 @@ def run(args):
                        == ('PETG', '#FF0000'), 10)
         check("Kiln -> AFC: IFS_SET_MATERIAL shows on lane2", ok and got,
               err or (lane(api, 2).get('material'), lane(api, 2).get('color')))
-        check("Kiln -> AFC: lane_data lane2 updated",
-              wait_for(lambda: MoonrakerStub.db.get('lane2', {}).get('material') == 'PETG', 10),
-              MoonrakerStub.db.get('lane2'))
+        check("Kiln -> AFC: lane_data T1 (lane2) updated",
+              wait_for(lambda: MoonrakerStub.db.get('T1', {}).get('material') == 'PETG', 10),
+              MoonrakerStub.db.get('T1'))
         ok, err, out = api.gcode("SET_COLOR LANE=lane3 COLOR=00FF00\n"
                                  "SET_MATERIAL LANE=lane3 MATERIAL=ABS")
         got = wait_for(lambda: (kslot(3).get('type'), kslot(3).get('color')) == ('ABS', '#00FF00'), 10)
@@ -283,7 +284,7 @@ def run(args):
         check("T1 back on lane2 after IFS_MAP_TOOL RESET",
               ok and ifs(api).get('channel') == 2, err or ifs(api).get('channel'))
         check("lane maps back to T0-T3 after RESET",
-              [lane(api, n).get('map') for n in (1, 2, 3, 4)] == ["T0", "T1", "T2", "T3"],
+              [lane(api, n).get('map') for n in (1, 2, 3, 4)] == [["T0"], ["T1"], ["T2"], ["T3"]],
               [lane(api, n).get('map') for n in (1, 2, 3, 4)])
         api.gcode("TOOL_UNLOAD")
 

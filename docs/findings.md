@@ -1,7 +1,7 @@
 # Running AFC-Klipper-Add-On on Kiln OS: findings
 
 What it took to run the full ArmoredTurtle AFC (pinned at
-`AFC_COMMIT`) on Kiln OS with the Flashforge IFS as an AFC unit, and what
+`AFC_COMMIT`, AFC's DEV branch since 2026-11-08) on Kiln OS with the Flashforge IFS as an AFC unit, and what
 could move upstream so the Kiln-specific part shrinks to configuration.
 
 Status: emulator-tested (`tests/test_kiln_afc.py`, 22 checks against
@@ -22,6 +22,20 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
 - `plugin.cfg`: AFC's cut, park, poop, kick, wipe, tip forming and z_hop
   are off (Kiln's IFS commands do that work); `force_assign_map` hands
   T0-T3 to AFC (Kiln's macros become `_T0`-`_T3`).
+
+## AFC DEV (3973c77) vs main
+
+- Fixed on DEV: `send_lane_data` without a Moonraker client (before PREP);
+  several T(n) per lane (`enable_multiple_mapping`, `lane.map` is a list).
+  AFC_IFS now replays Kiln's tool map with `SET_MAP` instead of writing
+  `afc.tool_cmds`.
+- New bug on DEV: a lane's config `map:` stays the tuple from
+  `config.getlist()` (`AFC_lane.__init__`), so the first multi-mapping
+  `SET_MAP` onto it raises `tuple + list` and shuts Klipper down. Maps
+  restored from AFC.var are lists. AFC_IFS converts its lanes at PREP.
+- lane_data is keyed by T(n) on DEV (`T0`..), Kiln's kiln_lanes keeps
+  writing `lane1`..`lane4`: Orca gets both sets, and they disagree while a
+  print's tool map differs from the slots.
 
 ## Candidates for AFC upstream
 

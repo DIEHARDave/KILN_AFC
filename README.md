@@ -19,11 +19,16 @@ How it fits together and what could move into AFC or Kiln:
 ```sh
 cd /data/ad5x/plugins
 su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/KILN_AFC afc"
-su -s /bin/sh klipper -c "sh /data/ad5x/plugins/afc/install.sh"   # clones AFC at AFC_COMMIT
+su -s /bin/sh klipper -c "sh /data/ad5x/plugins/afc/install.sh"   # clones AFC at AFC_COMMIT (AFC DEV)
 ```
 
 Then `DISABLE_PLUGIN NAME=afclite` (if installed), `ENABLE_PLUGIN NAME=afc`,
-and restart Klipper.
+and restart Klipper. After updating the plugin or `AFC_COMMIT`, restart the
+Klipper service (`/etc/init.d/S61klipper restart`): `RESTART` and
+`FIRMWARE_RESTART` keep the already loaded Python modules.
+
+Don't run AFC's `install-afc.sh` on Kiln: Klipper is read-only there, and
+this plugin does its job (module paths, config).
 
 ## Options
 

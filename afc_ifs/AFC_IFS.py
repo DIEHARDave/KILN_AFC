@@ -231,34 +231,34 @@ class afcIFS(afcUnit):
     # -- tool map: Kiln's ifs.tool_map -> AFC's tool_cmds -----------------------
 
     def _sync_tool_map(self, tool_map):
-        """AFC resolves T<n> through afc.tool_cmds ('T1' -> 'lane2') on each
-        call. Kiln maps tools to slots itself and may give two tools one
-        slot, which AFC's SET_MAP (one tool per lane) can't express, so
-        tool_cmds is written directly. Applied when Kiln's map changes; a
+        """Kiln maps tools to slots itself (color matching at print start, the
+        screen, IFS_MAP_TOOL) and may give two tools one slot. Each change is
+        replayed into AFC with SET_MAP, which with enable_multiple_mapping
+        moves one T(n) to a lane (AFC DEV). Applied when Kiln's map changes; a
         SET_MAP in between holds until then."""
         if not isinstance(tool_map, dict) or tool_map == self._tool_map:
             return
         self._tool_map = dict(tool_map)
-        moved = []
+        if not getattr(self.afc, 'enable_multiple_mapping', False):
+            self.logger.info("AFC_IFS: follow_tool_map needs [AFC] enable_multiple_mapping: True")
+            return
+        moves = []
         for tool, slot in sorted(tool_map.items()):
             tcmd = "T%s" % (tool,)
             lane = self._lane_for_slot(slot)
-            if lane is None or tcmd not in self.afc.tool_cmds:
+            if (lane is None
+                or tcmd not in self.afc.tool_cmds
+                or self.afc.tool_cmds[tcmd] == lane.name):
                 continue
-            if self.afc.tool_cmds[tcmd] != lane.name:
-                self.afc.tool_cmds[tcmd] = lane.name
-                moved.append("%s->%s" % (tcmd, lane.name))
-        # Each lane shows (and SET_MAP swaps) its first tool; a lane no tool
-        # maps to keeps its label
-        for lane in self.lanes.values():
-            tools = sorted((k for k, v in self.afc.tool_cmds.items() if v == lane.name),
-                           key=lambda t: int(t[1:]) if t[1:].isdigit() else 99)
-            if tools and lane.map not in tools:
-                lane.map = tools[0]
-                self._send_lane_data(lane)
-        if moved:
-            self.logger.info("AFC_IFS: following Kiln's tool map: %s" % ", ".join(moved))
-            self.afc.save_vars()
+            moves.append("SET_MAP LANE=%s MAP=%s" % (lane.name, tcmd))
+        if not moves:
+            return
+        self.logger.info("AFC_IFS: following Kiln's tool map: %s" % ", ".join(moves))
+        for cmd in moves:
+            try:
+                self.gcode.run_script(cmd)
+            except Exception as e:
+                self.logger.info("AFC_IFS: %s failed: %s" % (cmd, e))
 
     # -- material and color: AFC lanes <-> Kiln's ifs_materials ---------------
 
@@ -404,6 +404,10 @@ class afcIFS(afcUnit):
                 msg += 'EMPTY READY FOR SPOOL'
         if assignTcmd:
             self.afc.function.TcmdAssign(cur_lane)
+        if isinstance(cur_lane.map, tuple):
+            # AFC_lane keeps a config `map:` as getlist()'s tuple; SET_MAP with
+            # enable_multiple_mapping then fails on tuple + list (AFC DEV)
+            cur_lane.map = list(cur_lane.map)
         if succeeded and self.sync_materials and cur_lane.prep_state:
             k = self._kiln_slots(self.reactor.monotonic()).get(
                 str(self._slot[cur_lane.name]))
@@ -415,7 +419,7 @@ class afcIFS(afcUnit):
         self._send_lane_data(cur_lane)
         cur_lane.do_enable(False)
         self.logger.info('{lane_name} tool cmd: {tcmd:3} {msg}'.format(
-            lane_name=cur_lane.name, tcmd=cur_lane.map, msg=msg))
+            lane_name=cur_lane.name, tcmd=cur_lane.map_to_string(), msg=msg))
         cur_lane.set_afc_prep_done()
         return succeeded
 

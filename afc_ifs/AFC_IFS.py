@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import traceback
 from configparser import Error as error
@@ -41,6 +43,10 @@ def color_hex(value):
 
 # Seconds AFC gets to fetch a spool from Spoolman after SET_SPOOL_ID
 SPOOL_WAIT = 10.0
+
+# Next to AFC's VarFile, written by kiln_afc when it replaces afclite: the
+# lane spools afclite had ({"slots": {"1": 12, ...}}). Read once.
+SEED_SUFFIX = '.afclite-spools.json'
 
 
 def spool_id(value):
@@ -83,6 +89,7 @@ class afcIFS(afcUnit):
         self._spool_synced = {}   # slot -> spool ID (or None) both sides agree on
         self._spool_wait = {}     # slot -> (spool ID, deadline) while AFC fetches it
         self._spool_pushed = {}   # slot -> deadline while our SPOOLMAN_SET_SLOT runs
+        self._seed_checked = False  # afclite's spools taken over (SEED_SUFFIX)
         self.load_cmd = config.get('load_cmd', 'IFS_LOAD SLOT={slot}')
         self.unload_cmd = config.get('unload_cmd', 'IFS_UNLOAD SLOT={slot}')
         self.swap_cmd = config.get('swap_cmd', 'IFS_SWAP CHANNEL={slot}')
@@ -377,13 +384,21 @@ class afcIFS(afcUnit):
     def _sync_spools(self, eventtime):
         """Both sides keep a spool per slot and set Moonraker's active spool
         on a load: AFC on its tool loads, the plugin on every Kiln
-        ifs:loaded. AFC wins on the first look; after that a change on
-        either side is copied to the other."""
-        if self.spool_slots is None or getattr(self.afc, 'spoolman', None) is None:
+        ifs:loaded. AFC wins on the first look (except right after the
+        switch from afclite, _take_seed); after that a change on either
+        side is copied to the other."""
+        if getattr(self.afc, 'spoolman', None) is None:
             return
-        try:
-            kiln_slots = self.spool_slots.get_status(eventtime).get('slots') or {}
-        except Exception:
+        kiln_slots = {}
+        if self.spool_slots is not None:
+            try:
+                kiln_slots = self.spool_slots.get_status(eventtime).get('slots') or {}
+            except Exception:
+                return
+        if not self._seed_checked:
+            self._seed_checked = True
+            self._take_seed(kiln_slots, eventtime)
+        if self.spool_slots is None:
             return
         for lane in self.lanes.values():
             slot = self._slot[lane.name]
@@ -421,6 +436,37 @@ class afcIFS(afcUnit):
                 # Set on AFC's side: SET_SPOOL_ID, the AFC panels, FF_NFC, runout
                 self._spool_synced[slot] = afc
                 self._push_spool(slot, afc, eventtime)
+
+    def _take_seed(self, kiln_slots, eventtime):
+        """First start after kiln_afc replaced afclite: a lane AFC has no
+        spool for takes Kiln's spoolman slot spool, else afclite's own
+        (which afclite showed), instead of AFC clearing them."""
+        path = str(getattr(self.afc, 'VarFile', '') or '') + SEED_SUFFIX
+        try:
+            with open(path) as f:
+                seed = json.load(f).get('slots') or {}
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, AttributeError):
+            seed = {}
+        for lane in self.lanes.values():
+            slot = self._slot[lane.name]
+            if spool_id(lane.spool_id) is not None:
+                continue
+            kiln = spool_id(kiln_slots.get(str(slot)))
+            sid = kiln or spool_id(seed.get(str(slot)))
+            if sid is None:
+                continue
+            self.logger.info("AFC_IFS: %s keeps spool %s from afclite" % (lane.name, sid))
+            self._apply_spool(lane, slot, sid, eventtime)
+            if str(slot) in kiln_slots:
+                self._spool_synced[slot] = sid
+                if kiln != sid:
+                    self._push_spool(slot, sid, eventtime)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
     def _push_spool(self, slot, sid, eventtime):
         self._spool_pushed[slot] = eventtime + SPOOL_WAIT

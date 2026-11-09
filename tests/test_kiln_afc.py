@@ -29,6 +29,8 @@ PLUGIN = os.path.dirname(HERE)
 WORK = os.path.expanduser("~/kiln_afc_test")
 LINK = "/tmp/ifs_afc"
 MOONRAKER_PORT = 7139
+# kiln_afc's afclite spool hand-over (AFC_IFS SEED_SUFFIX next to AFC.var)
+SEED_FILE = os.path.join(WORK, "AFC", "AFC.var.afclite-spools.json")
 
 results = []
 
@@ -273,6 +275,14 @@ def run(args):
         def kspool(n):
             return ((api.query("spoolman_slots")["spoolman_slots"] or {})
                     .get('slots', {}).get(str(n)))
+        # main() left the seed kiln_afc writes when it replaces afclite
+        got = wait_for(lambda: lane(api, 4).get('spool_id') == 6 and kspool(4) == 6, 20)
+        check("after afclite: its lane spool (slot 4 = 6) is kept, both sides", got,
+              (lane(api, 4).get('spool_id'), kspool(4)))
+        check("after afclite: the seed file is used once",
+              not os.path.exists(SEED_FILE))
+        api.gcode("SET_SPOOL_ID LANE=lane4 SPOOL_ID=")
+        wait_for(lambda: lane(api, 4).get('spool_id') is None and kspool(4) is None, 15)
         ok, err, out = api.gcode("SET_SPOOL_ID LANE=lane2 SPOOL_ID=5")
         got = wait_for(lambda: lane(api, 2).get('spool_id') == 5 and kspool(2) == 5, 15)
         check("AFC -> Kiln: SET_SPOOL_ID lane2 reaches spoolman_slots slot 2", ok and got,
@@ -402,6 +412,8 @@ def main():
     os.makedirs(os.path.join(WORK, "gcodes"))
     os.makedirs(os.path.join(WORK, "AFC"))
     open(os.path.join(WORK, "variables.cfg"), "w").close()
+    with open(SEED_FILE, "w") as f:
+        json.dump({"slots": {"4": 6}}, f)
     if os.path.lexists(LINK):
         os.unlink(LINK)
     start_moonraker()

@@ -18,15 +18,145 @@
 #
 # Copyright (C) 2026 DIEHARDave. GPLv3, like Klipper and AFC.
 
+import ast
+import configparser
 import importlib
+import json
 import logging
 import os
+import re
+import shutil
 import sys
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 DEFAULT_AFC_DIR = os.path.join(PLUGIN_DIR, 'AFC-Klipper-Add-On')
 UNIT_DIR = os.path.join(PLUGIN_DIR, 'afc_ifs')
 IFS_TYPE = 'IFS'
+
+# KILN_AFCLite (plugin "afclite") is replaced by this plugin. Both make the
+# AFC object and CHANGE_TOOL, so they can't start together; Kiln's
+# ad5x_plugins defaults (its [ad5x_plugins] options override them).
+AFCLITE = 'afclite'
+AFCLITE_SPOOL_PREFIX = 'kiln_afclite_spool_e'
+KILN_PATHS = {
+    'plugins_file': '/home/klipper/printer_data/config/plugins.cfg',
+    'moonraker_file': '/home/klipper/printer_data/config/moonraker-plugins.conf',
+    'user_dir': '/data/ad5x/plugins',
+    'moonraker_restart_file': '/data/ad5x/kiln-update/restart-moonraker',
+}
+# ad5x_plugins' include line: [include <dir>/<name>/plugi[n].cfg]
+INCLUDE_RE = re.compile(r"^\s*\[include\s+\S*/(?P<name>[A-Za-z0-9_.-]+)/"
+                        r"plugi(?:n|\[n\])\.cfg\s*\]\s*$")
+# AFC_IFS reads this next to AFC's VarFile: lane spools to keep at its
+# first spool sync (afclite's, or Kiln's spoolman slots)
+SEED_SUFFIX = '.afclite-spools.json'
+
+
+def _write_atomic(path, text):
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def _afclite_spools(config):
+    """slot -> spool ID afclite kept in save_variables (it uses Kiln's
+    spoolman slots instead when that plugin is on; AFC_IFS reads those)."""
+    if not config.has_section('save_variables'):
+        return {}
+    path = config.getsection('save_variables').get('filename', None,
+                                                     note_valid=False)
+    if not path:
+        return {}
+    vars_ = configparser.ConfigParser()
+    try:
+        vars_.read(os.path.expanduser(path))
+        items = vars_.items('Variables') if vars_.has_section('Variables') else []
+    except configparser.Error:
+        return {}
+    spools = {}
+    for key, val in items:
+        if not key.startswith(AFCLITE_SPOOL_PREFIX):
+            continue
+        try:
+            slot = int(key[len(AFCLITE_SPOOL_PREFIX):]) + 1
+            sid = int(ast.literal_eval(val) or 0)
+        except (ValueError, SyntaxError, TypeError):
+            continue
+        if 1 <= slot <= 16 and sid > 0:
+            spools[str(slot)] = sid
+    return spools
+
+
+def retire_afclite(config):
+    """Disable and delete KILN_AFCLite. Returns True when it was enabled in
+    this Klipper start (Klipper then has to restart without it)."""
+    opts = dict(KILN_PATHS)
+    if config.has_section('ad5x_plugins'):
+        sect = config.getsection('ad5x_plugins')
+        for key in opts:
+            opts[key] = sect.get(key, opts[key], note_valid=False)
+    pdir = os.path.join(opts['user_dir'], AFCLITE)
+    try:
+        with open(opts['plugins_file']) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    def is_afclite(line):
+        m = INCLUDE_RE.match(line)
+        return m is not None and m.group('name') == AFCLITE
+    keep = [l for l in lines if not is_afclite(l)]
+    enabled = len(keep) != len(lines)
+    try:
+        with open(os.path.join(pdir, 'plugin.json')) as f:
+            installed = json.load(f).get('name') == AFCLITE
+    except (OSError, ValueError, AttributeError):
+        installed = False
+    if not enabled and not installed:
+        return False
+    # Switching over from afclite: the lane spools it had, for AFC_IFS's
+    # first spool sync (an afclite that was already off left AFC in charge)
+    if enabled and config.has_section('AFC'):
+        var = config.getsection('AFC').get('VarFile', None, note_valid=False)
+        if var:
+            try:
+                os.makedirs(os.path.dirname(var), exist_ok=True)
+                _write_atomic(var + SEED_SUFFIX,
+                              json.dumps({'slots': _afclite_spools(config)}))
+            except OSError as e:
+                logging.warning("kiln_afc: can't write %s: %s",
+                                var + SEED_SUFFIX, e)
+    if enabled:
+        _write_atomic(opts['plugins_file'], "\n".join(keep) + "\n")
+    # Its Moonraker part (update_manager entry) goes too; Moonraker would
+    # stop on an include of a file that is gone
+    mr_changed = False
+    try:
+        with open(opts['moonraker_file']) as f:
+            mr = f.read().splitlines()
+        mine = '/%s/moonraker.conf' % AFCLITE
+        mr_keep = [l for l in mr if not (l.strip().startswith('[include')
+                                         and mine in l)]
+        if mr_keep != mr:
+            _write_atomic(opts['moonraker_file'], "\n".join(mr_keep) + "\n")
+            mr_changed = True
+    except OSError:
+        pass
+    if installed:
+        if os.path.islink(pdir):
+            os.unlink(pdir)
+        else:
+            shutil.rmtree(pdir)
+    if mr_changed:
+        try:
+            with open(opts['moonraker_restart_file'], 'w') as f:
+                f.write("plugins\n")
+        except OSError as e:
+            logging.info("kiln_afc: %s: %s", opts['moonraker_restart_file'], e)
+    logging.info("kiln_afc: retired afclite (was %s%s)",
+                 "enabled" if enabled else "disabled",
+                 ", deleted %s" % pdir if installed else "")
+    return enabled
 
 
 def _add_paths(afc_dir):
@@ -52,6 +182,7 @@ def _teach_unit_type():
 class KilnAFC:
     def __init__(self, config):
         self.printer = printer = config.get_printer()
+        self._retire_afclite(config)
         self.afc_dir = config.get('afc_path', DEFAULT_AFC_DIR)
         if not os.path.isfile(os.path.join(self.afc_dir, 'extras', 'AFC.py')):
             raise config.error(
@@ -63,6 +194,26 @@ class KilnAFC:
         self._orig_load_object = printer.load_object
         printer.load_object = self._load_object
         logging.info("kiln_afc: AFC modules from %s", ", ".join(self.dirs))
+
+    def _retire_afclite(self, config):
+        # ENABLE_PLUGIN NAME=afc with afclite still on: this start has
+        # both, which can't work. Drop afclite, then restart without it.
+        try:
+            was_on = retire_afclite(config)
+        except OSError as e:
+            raise config.error(
+                "kiln_afc: can't remove afclite (KILN_AFCLite): %s. Run "
+                "DISABLE_PLUGIN NAME=afclite, then REMOVE_PLUGIN NAME=afclite"
+                % (e,))
+        if not was_on:
+            return
+        reactor = self.printer.get_reactor()
+        reactor.register_callback(
+            lambda e: self.printer.request_exit('restart'),
+            reactor.monotonic() + 2.)
+        raise config.error(
+            "KILN_AFC replaces afclite (KILN_AFCLite): afclite is now "
+            "disabled and deleted. Klipper restarts without it in a moment.")
 
     def _prepare_varfile(self, config):
         # AFC's PREP stops with "AFC.var.unit file not found" on a first

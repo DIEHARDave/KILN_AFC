@@ -3,8 +3,8 @@
 ArmoredTurtle's [AFC-Klipper-Add-On](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On)
 on Kiln OS, with the AD5X IFS as an AFC unit. **Prototype: emulator-tested,
 and running on one AD5X since 2026-11-08 (idle changes and two-color
-prints).** Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite)
-(the two conflict).
+prints).** Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite):
+enabling this plugin disables and deletes afclite ([below](#coming-from-afclite)).
 
 AFC owns the tool changes (T0-T3, `CHANGE_TOOL`, `TOOL_UNLOAD`,
 `LANE_UNLOAD`, runout lanes, stats, the AFC panels). Kiln's IFS commands do
@@ -24,13 +24,29 @@ su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/KILN_AFC afc"
 su -s /bin/sh klipper -c "sh /data/ad5x/plugins/afc/install.sh"   # clones AFC at AFC_COMMIT (AFC DEV)
 ```
 
-Then `DISABLE_PLUGIN NAME=afclite` (if installed), `ENABLE_PLUGIN NAME=afc`,
-and restart Klipper. After updating the plugin or `AFC_COMMIT`, restart the
+Then `ENABLE_PLUGIN NAME=afc`. After updating the plugin or `AFC_COMMIT`, restart the
 Klipper service (`/etc/init.d/S61klipper restart`): `RESTART` and
 `FIRMWARE_RESTART` keep the already loaded Python modules.
 
 Don't run AFC's `install-afc.sh` on Kiln: Klipper is read-only there, and
 this plugin does its job (module paths, config).
+
+### Coming from AFCLite
+
+Both plugins make the AFC object and `CHANGE_TOOL`, so they can't run
+together. When KILN_AFC starts and finds afclite, it removes it:
+
+- drops afclite from `plugins.cfg` and its update entry from
+  `moonraker-plugins.conf` (Moonraker restarts),
+- deletes `/data/ad5x/plugins/afclite`,
+- if afclite was still enabled, stops this start with a message and
+  restarts Klipper by itself 2 s later, without afclite.
+
+Lane spools carry over: a lane AFC has no spool for takes the spool of
+Kiln's spoolman slot, else the one afclite kept (`kiln_afclite_spool_*` in
+save_variables; those variables stay). Lane names change from E0-E3 to
+lane1-lane4: restart HelixScreen once (`/etc/init.d/S70helixscreen restart`)
+so it drops the old names.
 
 ## Options
 
@@ -72,6 +88,9 @@ python3 tests/test_kiln_afc.py --klipper ~/kiln-klipper \
     --afc ~/AFC-Klipper-Add-On --emu ~/KILN_IFSJacker/emulator \
     --python ~/klippy-test-env/bin/python
 ```
+
+`python3 tests/test_retire_afclite.py` checks the afclite removal on
+its own (no Klipper).
 
 Linux (WSL works). Uses Kiln's `ifs.py` from `tests/kiln_files` and
 KILN_IFSJacker's `fake_ifs.py` and `kiln_test_probe.py`.

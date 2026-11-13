@@ -476,7 +476,8 @@ class ZmodBackend(IFSBackend):
 
     def reset_map(self) -> None:
         """
-        Put Zmod's tool map back to T(n) on slot n+1 after a print.
+        Put Zmod's tool map back to T(n) on slot n+1 after a print. The next
+        sync_map takes the file as new, so AFC's lane maps follow it.
         """
         count = max(len(self.unit.slots_by_lane), 1)
         _, fmap = self.read_map()
@@ -484,6 +485,7 @@ class ZmodBackend(IFSBackend):
         if fmap != new:
             self.unit.logger.info(f"AFC_IFS: print ended, tool map back to {new}")
             self.write_map(new)
+        self.map_agreed = None
 
     def apply_file_map(self, fmap: List[int], run: Callable[[str], None]) -> None:
         """

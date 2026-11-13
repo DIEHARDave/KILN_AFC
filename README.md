@@ -69,7 +69,7 @@ so it drops the old names.
 
 ## Options
 
-`[AFC_IFS IFS]` in local.cfg:
+`[AFC_IFS IFS]` in local.cfg. `afc_ifs/AFC_IFS.py` is the shared IFS unit for Kiln OS and Zmod (Kiln and Zmod backends), proposed for AFC itself; until AFC ships it, this plugin carries a copy.
 
 | Option | Default | |
 |---|---|---|
@@ -77,9 +77,11 @@ so it drops the old names.
 | `afc_heats` | False | Let AFC pre-heat before loads (Kiln heats anyway) |
 | `sync_materials` | True | Sync lane material/color with `ifs_materials` |
 | `sync_spools` | True | Sync lane Spoolman spools with Kiln's spoolman plugin (below) |
-| `follow_tool_map` | True | Route `T<n>` to the lane of the slot Kiln maps tool n to (`ifs.tool_map`) |
+| `sync_map` | True | Route `T<n>` to the lane of the slot Kiln maps tool n to (`ifs.tool_map`); the old name `follow_tool_map` still works |
 | `poll_interval` | 1.0 | Seconds between IFS reads |
 | `stable_polls` | 3 | Reads a slot change must hold |
+| `empty_polls` | 3 | Reads before an emptied slot counts |
+| `firmware` | auto | `auto`, `kiln` or `zmod` (the unit also runs on Zmod) |
 | `head_sensor` | `adc_filament_sensor toolhead` | Toolhead sensor object |
 | `load_cmd`, `unload_cmd`, `swap_cmd`, `eject_cmd` | `IFS_LOAD SLOT={slot}`, ... | Commands per move |
 

@@ -260,6 +260,7 @@ class ZmodBackend(IFSBackend):
         self.printing = False
         self.seeded = False
         self.runout_tool: Optional[int] = None
+        self.slot_count = 0
 
     def connect(self) -> None:
         """
@@ -407,6 +408,42 @@ class ZmodBackend(IFSBackend):
         if unit.sync_map:
             self.sync_map()
         self.seed_spools()
+        self.save_slot_count(st)
+
+    def save_slot_count(self, st: Dict[str, Any]) -> None:
+        """
+        Save the IFS's slot count as `afc_lanes` for Zmod's fix_config.sh,
+        which creates lane5-laneN for an IFS Jacker at the next boot, and say
+        once when the IFS has more slots than AFC has lanes.
+
+        The count is the Jacker's `channel_count` from the IFS status, else
+        the slots zmod_color reports.
+
+        :param st: Current status
+        """
+        count = 0
+        ifs_data = getattr(self.zifs, "ifs_data", None)
+        match = re.search(r"channel_count:\s*(\d+)", getattr(ifs_data, "lastResponseRaw", "") or "")
+        if match:
+            count = int(match.group(1))
+        else:
+            count = len(st.get("slots") or {})
+        count = max(0, min(MAX_SLOTS, count))
+        if (not count
+            or count == self.slot_count):
+            return
+        self.slot_count = count
+        unit = self.unit
+        if (self.save_variables is not None
+            and self.save_variables.allVariables.get("afc_lanes") != count):
+            unit.run_later(f"SAVE_VARIABLE VARIABLE=afc_lanes VALUE={count}")
+        missing = [s for s in range(1, count + 1) if unit.lane_for_slot(s) is None]
+        if missing:
+            first, last = missing[0], missing[-1]
+            lanes = f"lane{first}" if first == last else f"lane{first}-lane{last}"
+            unit.logger.info(f"AFC_IFS: the IFS has {count} slots, AFC has no lane for slot"
+                             f" {', '.join(str(s) for s in missing)}. Reboot the printer: Zmod"
+                             f" adds {lanes} at start.")
 
     def read_map(self) -> Tuple[Optional[float], Optional[List[int]]]:
         """

@@ -1,7 +1,7 @@
 {
   "name": "afc",
   "description": "AFC-Klipper-Add-On with the AD5X IFS as an AFC unit; Kiln does the loads, unloads and swaps",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "author": "DIEHARDave",
   "url": "https://github.com/DIEHARDave/KILN_AFC",
   "requires_os": "1.3",
